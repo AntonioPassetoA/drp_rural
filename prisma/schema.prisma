@@ -1,0 +1,295 @@
+// DRP Rural Gestão - Prisma Schema
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ============================================
+// ENUMS
+// ============================================
+
+enum UserRole {
+  platform_admin
+  project_manager
+  agronomist
+  local_manager
+  operator
+}
+
+enum ProjectStatus {
+  active
+  paused
+  completed
+}
+
+enum TaskStatus {
+  pending
+  in_progress
+  completed
+  cancelled
+}
+
+enum TaskPriority {
+  low
+  medium
+  high
+  urgent
+}
+
+enum TaskType {
+  task
+  order
+}
+
+enum DiagnosticStatus {
+  draft
+  completed
+}
+
+enum DiagnosticFormType {
+  municipality_history
+  drp_summary
+  applied_methodology
+  social_reality
+  environmental_reality
+  productive_vocations
+  main_actions
+  final_recommendations
+}
+
+enum LocalityType {
+  community
+  settlement
+  village
+  other
+}
+
+enum EvidenceType {
+  photo
+  video
+  document
+}
+
+enum ScopeType {
+  project
+  municipality
+  microregion
+  locality
+}
+
+enum ProjectRole {
+  manager
+  agronomist
+  local_manager
+  operator
+}
+
+// ============================================
+// MODELS
+// ============================================
+
+model User {
+  id            String    @id @default(uuid())
+  email         String    @unique
+  password      String
+  fullName      String    @map("full_name")
+  role          UserRole  @default(operator)
+  phone         String?
+  avatarUrl     String?   @map("avatar_url")
+  isActive      Boolean   @default(true) @map("is_active")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  // Relations
+  projectsCreated   Project[]       @relation("ProjectCreator")
+  projectMembers    ProjectMember[]
+  diagnosticsFilled Diagnostic[]
+  tasksAssigned     Task[]          @relation("TaskAssignee")
+  tasksCreated      Task[]          @relation("TaskCreator")
+  evidencesUploaded Evidence[]
+  auditLogs         AuditLog[]
+
+  @@map("users")
+}
+
+model Project {
+  id          String        @id @default(uuid())
+  name        String
+  description String?
+  status      ProjectStatus @default(active)
+  startDate   DateTime?     @map("start_date")
+  endDate     DateTime?     @map("end_date")
+  createdById String        @map("created_by")
+  createdAt   DateTime      @default(now()) @map("created_at")
+  updatedAt   DateTime      @updatedAt @map("updated_at")
+
+  // Relations
+  createdBy      User            @relation("ProjectCreator", fields: [createdById], references: [id])
+  members        ProjectMember[]
+  municipalities Municipality[]
+  tasks          Task[]
+
+  @@map("projects")
+}
+
+model ProjectMember {
+  id            String      @id @default(uuid())
+  projectId     String      @map("project_id")
+  userId        String      @map("user_id")
+  roleInProject ProjectRole @default(operator) @map("role_in_project")
+  scopeType     ScopeType   @default(project) @map("scope_type")
+  scopeId       String?     @map("scope_id")
+  createdAt     DateTime    @default(now()) @map("created_at")
+
+  // Relations
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, userId])
+  @@map("project_members")
+}
+
+model Municipality {
+  id         String   @id @default(uuid())
+  projectId  String   @map("project_id")
+  name       String
+  state      String   @db.VarChar(2)
+  ibgeCode   String?  @map("ibge_code")
+  population Int?
+  areaKm2    Decimal? @map("area_km2") @db.Decimal(10, 2)
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  project      Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  microregions Microregion[]
+  diagnostics  Diagnostic[]
+
+  @@map("municipalities")
+}
+
+model Microregion {
+  id             String   @id @default(uuid())
+  municipalityId String   @map("municipality_id")
+  name           String
+  description    String?
+  familiesCount  Int?     @map("families_count")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  municipality Municipality @relation(fields: [municipalityId], references: [id], onDelete: Cascade)
+  localities   Locality[]
+
+  @@map("microregions")
+}
+
+model Locality {
+  id            String       @id @default(uuid())
+  microregionId String       @map("microregion_id")
+  name          String
+  localityType  LocalityType @default(community) @map("locality_type")
+  latitude      Decimal?     @db.Decimal(10, 8)
+  longitude     Decimal?     @db.Decimal(11, 8)
+  createdAt     DateTime     @default(now()) @map("created_at")
+  updatedAt     DateTime     @updatedAt @map("updated_at")
+
+  // Relations
+  microregion Microregion @relation(fields: [microregionId], references: [id], onDelete: Cascade)
+  tasks       Task[]
+  evidences   Evidence[]
+
+  @@map("localities")
+}
+
+model Diagnostic {
+  id             String             @id @default(uuid())
+  municipalityId String             @map("municipality_id")
+  formType       DiagnosticFormType @map("form_type")
+  data           Json               @default("{}")
+  status         DiagnosticStatus   @default(draft)
+  filledById     String             @map("filled_by")
+  filledAt       DateTime?          @map("filled_at")
+  createdAt      DateTime           @default(now()) @map("created_at")
+  updatedAt      DateTime           @updatedAt @map("updated_at")
+
+  // Relations
+  municipality Municipality @relation(fields: [municipalityId], references: [id], onDelete: Cascade)
+  filledBy     User         @relation(fields: [filledById], references: [id])
+  evidences    Evidence[]
+
+  @@unique([municipalityId, formType])
+  @@map("diagnostics")
+}
+
+model Task {
+  id           String       @id @default(uuid())
+  projectId    String       @map("project_id")
+  title        String
+  description  String?
+  taskType     TaskType     @default(task) @map("task_type")
+  priority     TaskPriority @default(medium)
+  status       TaskStatus   @default(pending)
+  assignedToId String       @map("assigned_to")
+  createdById  String       @map("created_by")
+  dueDate      DateTime     @map("due_date")
+  completedAt  DateTime?    @map("completed_at")
+  localityId   String?      @map("locality_id")
+  checklist    Json?
+  createdAt    DateTime     @default(now()) @map("created_at")
+  updatedAt    DateTime     @updatedAt @map("updated_at")
+
+  // Relations
+  project    Project    @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  assignedTo User       @relation("TaskAssignee", fields: [assignedToId], references: [id])
+  createdBy  User       @relation("TaskCreator", fields: [createdById], references: [id])
+  locality   Locality?  @relation(fields: [localityId], references: [id], onDelete: SetNull)
+  evidences  Evidence[]
+
+  @@map("tasks")
+}
+
+model Evidence {
+  id           String       @id @default(uuid())
+  evidenceType EvidenceType @map("evidence_type")
+  fileUrl      String       @map("file_url")
+  fileName     String       @map("file_name")
+  fileSize     Int          @map("file_size")
+  mimeType     String       @map("mime_type")
+  latitude     Decimal?     @db.Decimal(10, 8)
+  longitude    Decimal?     @db.Decimal(11, 8)
+  capturedAt   DateTime?    @map("captured_at")
+  taskId       String?      @map("task_id")
+  diagnosticId String?      @map("diagnostic_id")
+  localityId   String?      @map("locality_id")
+  uploadedById String       @map("uploaded_by")
+  createdAt    DateTime     @default(now()) @map("created_at")
+
+  // Relations
+  task       Task?       @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  diagnostic Diagnostic? @relation(fields: [diagnosticId], references: [id], onDelete: SetNull)
+  locality   Locality?   @relation(fields: [localityId], references: [id], onDelete: SetNull)
+  uploadedBy User        @relation(fields: [uploadedById], references: [id])
+
+  @@map("evidences")
+}
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  userId     String   @map("user_id")
+  action     String
+  entityType String   @map("entity_type")
+  entityId   String   @map("entity_id")
+  oldData    Json?    @map("old_data")
+  newData    Json?    @map("new_data")
+  ipAddress  String?  @map("ip_address")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  // Relations
+  user User @relation(fields: [userId], references: [id])
+
+  @@map("audit_logs")
+}
