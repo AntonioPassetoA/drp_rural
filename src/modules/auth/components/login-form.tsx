@@ -6,13 +6,14 @@ import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { AlertCircle, Loader2 } from 'lucide-react'
+import { AlertCircle, Loader2, Mail, Lock, Eye, EyeOff } from 'lucide-react'
 import Link from 'next/link'
 
 export function LoginForm() {
   const router = useRouter()
   const [error, setError] = useState<string | null>(null)
   const [isPending, setIsPending] = useState(false)
+  const [showPassword, setShowPassword] = useState(false)
 
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault()
@@ -57,55 +58,87 @@ export function LoginForm() {
   }
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-4">
+    <form onSubmit={handleSubmit} className="space-y-5">
       {error && (
-        <div className="flex items-center gap-2 p-3 text-sm text-red-600 bg-red-50 rounded-lg">
-          <AlertCircle className="h-4 w-4" />
-          {error}
+        <div className="flex items-center gap-3 p-4 text-sm text-red-700 bg-red-50 rounded-xl border border-red-100 animate-scale-in">
+          <div className="p-1 bg-red-100 rounded-full">
+            <AlertCircle className="h-4 w-4" />
+          </div>
+          <span className="font-medium">{error}</span>
         </div>
       )}
 
       <div className="space-y-2">
-        <Label htmlFor="email">Email</Label>
-        <Input
-          id="email"
-          name="email"
-          type="email"
-          placeholder="seu@email.com"
-          required
-          disabled={isPending}
-        />
+        <Label htmlFor="email" className="text-sm font-medium text-foreground">
+          Email
+        </Label>
+        <div className="relative">
+          <div className="absolute left-4 top-1/2 -translate-y-1/2 text-muted-foreground">
+            <Mail className="h-5 w-5" />
+          </div>
+          <Input
+            id="email"
+            name="email"
+            type="email"
+            placeholder="seu@email.com"
+            required
+            disabled={isPending}
+            className="pl-12 h-12 rounded-xl border-border/50 bg-white/50 focus:bg-white transition-colors"
+          />
+        </div>
       </div>
 
       <div className="space-y-2">
-        <Label htmlFor="password">Senha</Label>
-        <Input
-          id="password"
-          name="password"
-          type="password"
-          placeholder="******"
-          required
-          disabled={isPending}
-        />
+        <div className="flex items-center justify-between">
+          <Label htmlFor="password" className="text-sm font-medium text-foreground">
+            Senha
+          </Label>
+          <Link
+            href="/forgot-password"
+            className="text-xs text-primary hover:text-primary/80 font-medium transition-colors"
+          >
+            Esqueceu a senha?
+          </Link>
+        </div>
+        <div className="relative">
+          <div className="absolute left-4 top-1/2 -translate-y-1/2 text-muted-foreground">
+            <Lock className="h-5 w-5" />
+          </div>
+          <Input
+            id="password"
+            name="password"
+            type={showPassword ? 'text' : 'password'}
+            placeholder="••••••••"
+            required
+            disabled={isPending}
+            className="pl-12 pr-12 h-12 rounded-xl border-border/50 bg-white/50 focus:bg-white transition-colors"
+          />
+          <button
+            type="button"
+            onClick={() => setShowPassword(!showPassword)}
+            className="absolute right-4 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+          >
+            {showPassword ? (
+              <EyeOff className="h-5 w-5" />
+            ) : (
+              <Eye className="h-5 w-5" />
+            )}
+          </button>
+        </div>
       </div>
 
-      <div className="flex justify-end">
-        <Link
-          href="/forgot-password"
-          className="text-sm text-primary hover:underline"
-        >
-          Esqueci minha senha
-        </Link>
-      </div>
-
-      <Button type="submit" className="w-full" disabled={isPending}>
+      <Button
+        type="submit"
+        className="w-full h-12 rounded-xl font-semibold text-base gradient-primary hover:opacity-90 transition-all btn-glow shine"
+        disabled={isPending}
+      >
         {isPending ? (
-          <>
-            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+          <span className="flex items-center gap-2">
+            <Loader2 className="h-5 w-5 animate-spin" />
             Entrando...
-          </>
+          </span>
         ) : (
-          'Entrar'
+          'Entrar na plataforma'
         )}
       </Button>
     </form>
