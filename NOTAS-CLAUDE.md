@@ -1,7 +1,7 @@
 # 📋 Notas de Sessão — Claude Code
 
 > Documento de contexto para retomar o projeto de onde paramos.
-> **Última sessão:** 06/08/2026
+> **Última sessão:** 07/08/2026 — 🚀 App publicado na web (Vercel): https://drp-rural.vercel.app
 
 ---
 
@@ -49,12 +49,19 @@ npm run db:seed          # cria os usuários de teste
 
 ---
 
-## 🌐 Situação de "estar na web"
+## 🌐 Situação de "estar na web" — PUBLICADO ✅
 
-- ❌ **App (frontend):** NÃO está publicado. Roda só em `localhost`.
+- ✅ **App (frontend):** NO AR em **https://drp-rural.vercel.app** (hospedado na Vercel).
 - ✅ **Banco (Supabase):** ONLINE — `db.lyxupfdgroiagytfgunk.supabase.co`.
-- Se um dia quiser publicar o app: caminho recomendado é **Vercel** (grátis, encaixa em Next.js).
-  Precisa configurar as env vars lá: `DATABASE_URL`, `NEXTAUTH_SECRET`, `NEXTAUTH_URL`.
+- ✅ **Deploy automático:** a Vercel está conectada ao repo GitHub. Todo `git push` na branch `main` **republica o site automaticamente**.
+
+### Variáveis de ambiente configuradas na Vercel
+(Settings → Environment Variables do projeto na vercel.com)
+- `DATABASE_URL` — conexão do Supabase
+- `NEXTAUTH_SECRET` — chave do NextAuth
+- `NEXTAUTH_URL` — `https://drp-rural.vercel.app`
+
+> Se um dia trocar o valor de uma env var na Vercel, precisa **Redeploy** (Deployments → ⋯ → Redeploy) pra valer.
 
 ---
 
