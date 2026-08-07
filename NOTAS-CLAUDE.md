@@ -65,6 +65,17 @@ npm run db:seed          # cria os usuários de teste
 
 ---
 
+## 🚑 Deploy na Vercel — problemas já resolvidos (pra não repetir)
+
+1. **Build falhava sem `@types/pg`** — o `prisma/seed.ts` importa `pg`. Resolvido instalando `@types/pg` (dev).
+2. **`TypeError: Invalid URL` no build** — a env var `NEXTAUTH_URL` na Vercel estava com `https://` **duplicado**
+   (`https:// https://drp-rural.vercel.app`). Tem que ser **exatamente** `https://drp-rural.vercel.app` (um só `https://`, sem espaço).
+3. **Deploy bloqueado: "GitHub could not associate the committer" (plano Hobby)** — os commits estavam sendo
+   feitos com a conta `odontoresultsconteudos`, mas o dono da Vercel/GitHub é `AntonioPassetoA`. No plano grátis,
+   a Vercel bloqueia deploy de commits de "terceiros".
+   **Solução:** este repo está configurado (git local) para commitar como `AntonioPassetoA`
+   (`167901958+AntonioPassetoA@users.noreply.github.com`). **Sempre commitar com essa identidade** aqui.
+
 ## 🧱 Visão geral do projeto
 
 **DRP Rural Gestão** — SaaS de gestão de Diagnóstico Rural Participativo (DRP).
