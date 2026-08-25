@@ -18,16 +18,24 @@ export function getPermissions(role: UserRole): Permission[] {
   return ROLE_PERMISSIONS[role]
 }
 
-export function isPlatformAdmin(role: UserRole): boolean {
-  return role === 'platform_admin'
+export function isSuperadmin(role: UserRole): boolean {
+  return role === 'superadmin'
+}
+
+/** @deprecated use isSuperadmin — mantido para compatibilidade de código legado */
+export const isPlatformAdmin = isSuperadmin
+
+/** Gestor administra a própria organização; superadmin administra a plataforma. */
+export function isOrgAdmin(role: UserRole): boolean {
+  return role === 'gestor' || role === 'superadmin'
 }
 
 export function canManageUsers(role: UserRole): boolean {
-  return hasPermission(role, 'users:create') || isPlatformAdmin(role)
+  return hasPermission(role, 'users:create') || isSuperadmin(role)
 }
 
 export function canManageProjects(role: UserRole): boolean {
-  return hasPermission(role, 'projects:create') || isPlatformAdmin(role)
+  return hasPermission(role, 'projects:create') || isSuperadmin(role)
 }
 
 export function canGenerateReports(role: UserRole): boolean {

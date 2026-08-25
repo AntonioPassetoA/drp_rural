@@ -2,29 +2,19 @@ import { UserRole, ProjectRole } from '@prisma/client'
 
 export const USER_ROLES: { value: UserRole; label: string; description: string }[] = [
   {
-    value: 'platform_admin',
-    label: 'Administrador da Plataforma',
-    description: 'Acesso total ao sistema',
+    value: 'superadmin',
+    label: 'Superadministrador',
+    description: 'Administra toda a plataforma e as organizações',
   },
   {
-    value: 'project_manager',
-    label: 'Gestor de Projeto',
-    description: 'Gerencia projetos, equipes e relatórios',
+    value: 'gestor',
+    label: 'Gestor da Organização',
+    description: 'Administra a fazenda/empresa: usuários, cadastros, aprovações e relatórios',
   },
   {
-    value: 'agronomist',
-    label: 'Agrônomo / Técnico de Campo',
-    description: 'Realiza visitas e preenche formulários',
-  },
-  {
-    value: 'local_manager',
-    label: 'Gestor Local',
-    description: 'Acompanha execução na sua área',
-  },
-  {
-    value: 'operator',
-    label: 'Operador / Colaborador',
-    description: 'Executa tarefas atribuídas',
+    value: 'colaborador',
+    label: 'Colaborador / Agrônomo',
+    description: 'Registra atividades, diagnósticos e despesas no campo',
   },
 ]
 
@@ -36,17 +26,13 @@ export const PROJECT_ROLES: { value: ProjectRole; label: string }[] = [
 ]
 
 export const ROLE_LABELS: Record<UserRole, string> = {
-  platform_admin: 'Admin',
-  project_manager: 'Gestor',
-  agronomist: 'Agrônomo',
-  local_manager: 'Gestor Local',
-  operator: 'Operador',
+  superadmin: 'Superadmin',
+  gestor: 'Gestor',
+  colaborador: 'Colaborador',
 }
 
 export const ROLE_COLORS: Record<UserRole, string> = {
-  platform_admin: 'bg-purple-100 text-purple-700',
-  project_manager: 'bg-blue-100 text-blue-700',
-  agronomist: 'bg-green-100 text-green-700',
-  local_manager: 'bg-teal-100 text-teal-700',
-  operator: 'bg-gray-100 text-gray-700',
+  superadmin: 'bg-purple-100 text-purple-700',
+  gestor: 'bg-blue-100 text-blue-700',
+  colaborador: 'bg-green-100 text-green-700',
 }

@@ -135,9 +135,12 @@ Acesse [http://localhost:3000](http://localhost:3000)
 
 | Usuário | Email | Senha |
 |---------|-------|-------|
-| Admin | admin@drprural.com | admin123 |
-| Gestor | gestor@drprural.com | manager123 |
-| Agrônomo | agronomo@drprural.com | agronomo123 |
+| Superadmin | admin@drprural.com | definida via variável de ambiente |
+| Gestor | gestor@drprural.com | definida via variável de ambiente |
+| Colaborador | agronomo@drprural.com | definida via variável de ambiente |
+
+> As senhas **não são versionadas**. O seed lê `SEED_ADMIN_PASSWORD`,
+> `SEED_MANAGER_PASSWORD` e `SEED_AGRONOMIST_PASSWORD` do `.env` (veja `.env.example`).
 
 ## Scripts Disponíveis
 

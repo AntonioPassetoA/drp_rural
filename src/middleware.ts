@@ -27,7 +27,8 @@ export async function middleware(request: NextRequest) {
     secret: process.env.NEXTAUTH_SECRET,
   })
 
-  const isAuthenticated = !!token
+  // Token com `disabled` = usuário desativado/removido → tratar como não autenticado.
+  const isAuthenticated = !!token && !token.disabled
   const isPublicRoute = publicRoutes.includes(pathname)
   const isAuthRoute = authRoutes.includes(pathname)
 

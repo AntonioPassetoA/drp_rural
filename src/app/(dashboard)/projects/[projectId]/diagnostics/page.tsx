@@ -1,5 +1,6 @@
 import { prisma } from '@/lib/prisma'
 import { notFound } from 'next/navigation'
+import { requireAuth, requireProjectPageAccess } from '@/lib/authz'
 import { PageHeader } from '@/components/layout/page-header'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -54,6 +55,8 @@ async function getMunicipalitiesWithDiagnostics(projectId: string) {
 
 export default async function DiagnosticsPage({ params }: PageProps) {
   const { projectId } = await params
+  const ctx = await requireAuth()
+  await requireProjectPageAccess(ctx, projectId)
   const project = await getProject(projectId)
 
   if (!project) {

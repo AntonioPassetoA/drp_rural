@@ -17,10 +17,16 @@ import {
 } from 'lucide-react'
 import Link from 'next/link'
 import { Project, Task } from '@prisma/client'
+import { requireAuth, projectOrgWhere, viaProjectOrgWhere, type AuthContext } from '@/lib/authz'
 
-async function getDashboardStats(userId: string) {
+async function getDashboardStats(ctx: AuthContext) {
   const today = new Date()
   today.setHours(0, 0, 0, 0)
+
+  // Isolamento multiempresa: contadores restritos à organização da sessão
+  // (superadmin vê tudo). Municípios e tarefas filtram pela relação project.
+  const projWhere = projectOrgWhere(ctx)
+  const viaProj = viaProjectOrgWhere(ctx)
 
   const [
     projectsCount,
@@ -30,24 +36,26 @@ async function getDashboardStats(userId: string) {
     recentProjects,
     myTasks,
   ] = await Promise.all([
-    prisma.project.count(),
-    prisma.municipality.count(),
+    prisma.project.count({ where: projWhere }),
+    prisma.municipality.count({ where: viaProj }),
     prisma.task.count({
-      where: { status: { in: ['pending', 'in_progress'] } },
+      where: { status: { in: ['pending', 'in_progress'] }, ...viaProj },
     }),
     prisma.task.count({
       where: {
         status: { in: ['pending', 'in_progress'] },
         dueDate: { lt: today },
+        ...viaProj,
       },
     }),
     prisma.project.findMany({
+      where: projWhere,
       orderBy: { createdAt: 'desc' },
       take: 5,
     }),
     prisma.task.findMany({
       where: {
-        assignedToId: userId,
+        assignedToId: ctx.userId,
         status: { in: ['pending', 'in_progress'] },
       },
       include: {
@@ -73,11 +81,13 @@ async function getDashboardStats(userId: string) {
 export default async function DashboardPage() {
   const session = await getServerSession(authOptions)
 
+  const ctx = await requireAuth()
+
   const user = await prisma.user.findUnique({
     where: { id: session!.user.id },
   })
 
-  const stats = await getDashboardStats(session!.user.id)
+  const stats = await getDashboardStats(ctx)
 
   const hour = new Date().getHours()
   const greeting = hour < 12 ? 'Bom dia' : hour < 18 ? 'Boa tarde' : 'Boa noite'

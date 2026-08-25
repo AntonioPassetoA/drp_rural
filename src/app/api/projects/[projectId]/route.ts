@@ -1,7 +1,11 @@
-import { getServerSession } from 'next-auth'
-import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { NextRequest, NextResponse } from 'next/server'
+import {
+  requireAuth,
+  requirePermission,
+  requireProjectInOrg,
+  handleAuthzError,
+} from '@/lib/authz'
 
 interface RouteParams {
   params: Promise<{ projectId: string }>
@@ -9,59 +13,41 @@ interface RouteParams {
 
 export async function GET(request: NextRequest, { params }: RouteParams) {
   try {
-    const session = await getServerSession(authOptions)
-
-    if (!session?.user) {
-      return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
-    }
-
+    const ctx = await requireAuth()
+    requirePermission(ctx, 'projects:read')
     const { projectId } = await params
+
+    // Isolamento: 404 se o projeto não existir ou for de outra organização.
+    await requireProjectInOrg(ctx, projectId)
 
     const project = await prisma.project.findUnique({
       where: { id: projectId },
       include: {
         members: {
           include: {
-            user: {
-              select: {
-                id: true,
-                fullName: true,
-                email: true,
-              },
-            },
+            user: { select: { id: true, fullName: true, email: true } },
           },
         },
-        _count: {
-          select: {
-            municipalities: true,
-            tasks: true,
-          },
-        },
+        _count: { select: { municipalities: true, tasks: true } },
       },
     })
 
-    if (!project) {
-      return NextResponse.json({ error: 'Projeto não encontrado' }, { status: 404 })
-    }
-
     return NextResponse.json(project)
   } catch (error) {
-    console.error('Erro ao buscar projeto:', error)
-    return NextResponse.json({ error: 'Erro interno' }, { status: 500 })
+    return handleAuthzError(error)
   }
 }
 
 export async function PATCH(request: NextRequest, { params }: RouteParams) {
   try {
-    const session = await getServerSession(authOptions)
-
-    if (!session?.user) {
-      return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
-    }
-
+    const ctx = await requireAuth()
+    requirePermission(ctx, 'projects:update')
     const { projectId } = await params
-    const body = await request.json()
 
+    // Confirma posse antes de editar por ID.
+    await requireProjectInOrg(ctx, projectId)
+
+    const body = await request.json()
     const { name, description, status, startDate, endDate } = body
 
     const project = await prisma.project.update({
@@ -77,33 +63,24 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
 
     return NextResponse.json(project)
   } catch (error) {
-    console.error('Erro ao atualizar projeto:', error)
-    return NextResponse.json({ error: 'Erro interno' }, { status: 500 })
+    return handleAuthzError(error)
   }
 }
 
 export async function DELETE(request: NextRequest, { params }: RouteParams) {
   try {
-    const session = await getServerSession(authOptions)
-
-    if (!session?.user) {
-      return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
-    }
-
-    // Only platform_admin can delete projects
-    if (session.user.role !== 'platform_admin') {
-      return NextResponse.json({ error: 'Sem permissão' }, { status: 403 })
-    }
-
+    const ctx = await requireAuth()
+    // RBAC: apenas quem tem projects:delete (gestor/superadmin).
+    requirePermission(ctx, 'projects:delete')
     const { projectId } = await params
 
-    await prisma.project.delete({
-      where: { id: projectId },
-    })
+    // Confirma posse antes de excluir por ID.
+    await requireProjectInOrg(ctx, projectId)
+
+    await prisma.project.delete({ where: { id: projectId } })
 
     return NextResponse.json({ success: true })
   } catch (error) {
-    console.error('Erro ao deletar projeto:', error)
-    return NextResponse.json({ error: 'Erro interno' }, { status: 500 })
+    return handleAuthzError(error)
   }
 }

@@ -31,9 +31,14 @@ npm run db:seed          # cria os usuários de teste
 ### 🔑 Login de teste
 | Perfil | Email | Senha |
 |--------|-------|-------|
-| Admin | `admin@drprural.com` | `admin123` |
-| Gestor | `gestor@drprural.com` | `manager123` |
-| Agrônomo | `agronomo@drprural.com` | `agronomo123` |
+| Superadmin | `admin@drprural.com` | definida via ambiente (não versionada) |
+| Gestor | `gestor@drprural.com` | definida via ambiente (não versionada) |
+| Colaborador | `agronomo@drprural.com` | definida via ambiente (não versionada) |
+
+> As senhas **não ficam em código nem em documentação**. Para desenvolvimento, o seed
+> lê `SEED_ADMIN_PASSWORD`, `SEED_MANAGER_PASSWORD` e `SEED_AGRONOMIST_PASSWORD` do `.env`
+> (veja `.env.example`). As senhas das contas já existentes foram rotacionadas e ficam
+> apenas em `.env.local` (ignorado pelo git).
 
 ---
 

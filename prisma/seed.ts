@@ -15,52 +15,84 @@ const prisma = new PrismaClient({ adapter })
 async function main() {
   console.log('Iniciando seed do banco de dados...')
 
-  // Create admin user
-  const adminPassword = await bcrypt.hash('admin123', 10)
+  // SEGURANÇA: impede a execução do seed demonstrativo em produção.
+  if (process.env.NODE_ENV === 'production' && process.env.ALLOW_DEMO_SEED !== 'true') {
+    throw new Error(
+      'Seed demonstrativo bloqueado em produção. (Se realmente necessário, defina ALLOW_DEMO_SEED=true — não recomendado.)'
+    )
+  }
+
+  // SEGURANÇA: as senhas vêm SEMPRE de variáveis de ambiente — nunca fixas no código.
+  const adminPwd = process.env.SEED_ADMIN_PASSWORD
+  const managerPwd = process.env.SEED_MANAGER_PASSWORD
+  const agronomistPwd = process.env.SEED_AGRONOMIST_PASSWORD
+  if (!adminPwd || !managerPwd || !agronomistPwd) {
+    throw new Error(
+      'Defina SEED_ADMIN_PASSWORD, SEED_MANAGER_PASSWORD e SEED_AGRONOMIST_PASSWORD no .env antes de rodar o seed (veja .env.example).'
+    )
+  }
+
+  // Organização demo (tenant raiz de todos os dados de negócio)
+  const organization = await prisma.organization.upsert({
+    where: { slug: 'fazenda-demo' },
+    update: {},
+    create: {
+      name: 'Fazenda Demo',
+      slug: 'fazenda-demo',
+      status: 'active',
+    },
+  })
+
+  console.log('Organização demo criada:', organization.name)
+
+  // Superadmin da plataforma (não pertence a nenhuma organização)
+  const adminPassword = await bcrypt.hash(adminPwd, 10)
 
   const admin = await prisma.user.upsert({
     where: { email: 'admin@drprural.com' },
-    update: {},
+    update: { role: 'superadmin' as UserRole, organizationId: null },
     create: {
       email: 'admin@drprural.com',
       password: adminPassword,
       fullName: 'Administrador',
-      role: 'platform_admin' as UserRole,
+      role: 'superadmin' as UserRole,
       phone: '(11) 99999-9999',
     },
   })
 
   console.log('Usuário admin criado:', admin.email)
 
-  // Create demo project manager
-  const managerPassword = await bcrypt.hash('manager123', 10)
+  // Gestor da organização demo
+  const managerPassword = await bcrypt.hash(managerPwd, 10)
 
   const manager = await prisma.user.upsert({
     where: { email: 'gestor@drprural.com' },
-    update: {},
+    update: { role: 'gestor' as UserRole, organizationId: organization.id },
     create: {
       email: 'gestor@drprural.com',
       password: managerPassword,
-      fullName: 'Gestor de Projeto',
-      role: 'project_manager' as UserRole,
+      fullName: 'Gestor da Organização',
+      role: 'gestor' as UserRole,
       phone: '(11) 98888-8888',
+      organizationId: organization.id,
     },
   })
 
   console.log('Usuário gestor criado:', manager.email)
 
-  // Create demo agronomist
-  const agronomistPassword = await bcrypt.hash('agronomo123', 10)
+  // Colaborador (agrônomo) da organização demo
+  const agronomistPassword = await bcrypt.hash(agronomistPwd, 10)
 
   const agronomist = await prisma.user.upsert({
     where: { email: 'agronomo@drprural.com' },
-    update: {},
+    update: { role: 'colaborador' as UserRole, organizationId: organization.id },
     create: {
       email: 'agronomo@drprural.com',
       password: agronomistPassword,
       fullName: 'Agrônomo Demo',
-      role: 'agronomist' as UserRole,
+      role: 'colaborador' as UserRole,
       phone: '(11) 97777-7777',
+      organizationId: organization.id,
     },
   })
 
@@ -69,7 +101,7 @@ async function main() {
   // Create demo project
   const project = await prisma.project.upsert({
     where: { id: 'demo-project-id' },
-    update: {},
+    update: { organizationId: organization.id },
     create: {
       id: 'demo-project-id',
       name: 'Projeto DRP Demo',
@@ -77,6 +109,7 @@ async function main() {
       status: 'active',
       startDate: new Date(),
       createdById: admin.id,
+      organizationId: organization.id,
     },
   })
 
@@ -184,10 +217,12 @@ async function main() {
   console.log('Tarefa demo criada:', task.title)
 
   console.log('\n✅ Seed concluído com sucesso!')
-  console.log('\n📋 Credenciais de acesso:')
-  console.log('  Admin: admin@drprural.com / admin123')
-  console.log('  Gestor: gestor@drprural.com / manager123')
-  console.log('  Agrônomo: agronomo@drprural.com / agronomo123')
+  // NUNCA imprimir senhas em logs. Os e-mails abaixo são apenas para referência;
+  // as senhas foram definidas via variáveis de ambiente (SEED_*_PASSWORD).
+  console.log('\n📋 Usuários criados (senhas definidas via .env, não exibidas):')
+  console.log('  - admin@drprural.com     (superadmin)')
+  console.log('  - gestor@drprural.com    (gestor)')
+  console.log('  - agronomo@drprural.com  (colaborador)')
 }
 
 main()

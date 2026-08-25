@@ -6,6 +6,7 @@ import { EmptyState } from '@/components/common/empty-state'
 import { Plus, FolderKanban, MapPin, Users, ArrowRight, Calendar, Sparkles } from 'lucide-react'
 import Link from 'next/link'
 import { Project } from '@prisma/client'
+import { requireAuth, projectOrgWhere, type AuthContext } from '@/lib/authz'
 
 type ProjectWithCounts = Project & {
   _count: {
@@ -14,8 +15,11 @@ type ProjectWithCounts = Project & {
   }
 }
 
-async function getProjects(): Promise<ProjectWithCounts[]> {
+async function getProjects(ctx: AuthContext): Promise<ProjectWithCounts[]> {
   return prisma.project.findMany({
+    // Isolamento multiempresa: só projetos da organização da sessão
+    // (superadmin vê todos).
+    where: projectOrgWhere(ctx),
     include: {
       _count: {
         select: {
@@ -29,7 +33,8 @@ async function getProjects(): Promise<ProjectWithCounts[]> {
 }
 
 export default async function ProjectsPage() {
-  const projects = await getProjects()
+  const ctx = await requireAuth()
+  const projects = await getProjects(ctx)
 
   return (
     <div className="space-y-8 animate-fade-in">

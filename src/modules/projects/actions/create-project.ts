@@ -1,11 +1,10 @@
 'use server'
 
-import { getServerSession } from 'next-auth'
-import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { createProjectSchema } from '../validations/project-schema'
 import { redirect } from 'next/navigation'
 import { revalidatePath } from 'next/cache'
+import { requireAuth, requirePermission, AuthzError } from '@/lib/authz'
 
 export type CreateProjectState = {
   error?: string
@@ -16,10 +15,14 @@ export async function createProject(
   prevState: CreateProjectState,
   formData: FormData
 ): Promise<CreateProjectState> {
-  const session = await getServerSession(authOptions)
-
-  if (!session?.user) {
-    return { error: 'Não autorizado' }
+  // Autenticação + RBAC (colaborador não possui projects:create).
+  let ctx
+  try {
+    ctx = await requireAuth()
+    requirePermission(ctx, 'projects:create')
+  } catch (e) {
+    if (e instanceof AuthzError) return { error: e.message }
+    throw e
   }
 
   const rawData = {
@@ -38,32 +41,48 @@ export async function createProject(
     }
   }
 
+  // A organização vem SEMPRE da sessão — nunca do formulário/cliente.
+  // Superadmin não pertence a uma organização; não pode criar projeto sem
+  // escolher uma (seletor ainda não implementado neste formulário).
+  const organizationId = ctx.organizationId
+  if (!organizationId) {
+    return { error: 'Superadmin deve selecionar uma organização para criar projetos.' }
+  }
+
+  let newProjectId: string
   try {
-    const project = await prisma.project.create({
-      data: {
-        name: validatedFields.data.name,
-        description: validatedFields.data.description,
-        status: validatedFields.data.status as 'active' | 'paused' | 'completed',
-        startDate: validatedFields.data.start_date ? new Date(validatedFields.data.start_date) : null,
-        endDate: validatedFields.data.end_date ? new Date(validatedFields.data.end_date) : null,
-        createdById: session.user.id,
-      },
-    })
+    // Transação: projeto + vínculo do criador como gestor do projeto.
+    const project = await prisma.$transaction(async (tx) => {
+      const created = await tx.project.create({
+        data: {
+          name: validatedFields.data.name,
+          description: validatedFields.data.description,
+          status: validatedFields.data.status as 'active' | 'paused' | 'completed',
+          startDate: validatedFields.data.start_date ? new Date(validatedFields.data.start_date) : null,
+          endDate: validatedFields.data.end_date ? new Date(validatedFields.data.end_date) : null,
+          createdById: ctx.userId,
+          organizationId,
+        },
+      })
 
-    // Add creator as manager
-    await prisma.projectMember.create({
-      data: {
-        projectId: project.id,
-        userId: session.user.id,
-        roleInProject: 'manager',
-        scopeType: 'project',
-      },
-    })
+      await tx.projectMember.create({
+        data: {
+          projectId: created.id,
+          userId: ctx.userId,
+          roleInProject: 'manager',
+          scopeType: 'project',
+        },
+      })
 
-    revalidatePath('/projects')
-    redirect(`/projects/${project.id}`)
+      return created
+    })
+    newProjectId = project.id
   } catch (error) {
     console.error('Error creating project:', error)
     return { error: 'Erro ao criar projeto' }
   }
+
+  revalidatePath('/projects')
+  // redirect() lança NEXT_REDIRECT — precisa ficar FORA do try/catch acima.
+  redirect(`/projects/${newProjectId}`)
 }

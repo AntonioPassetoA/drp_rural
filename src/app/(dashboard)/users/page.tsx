@@ -1,5 +1,3 @@
-import { getServerSession } from 'next-auth'
-import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { redirect } from 'next/navigation'
 import { PageHeader } from '@/components/layout/page-header'
@@ -10,9 +8,13 @@ import { Plus, Mail, Phone, Shield } from 'lucide-react'
 import Link from 'next/link'
 import { ROLE_LABELS } from '@/lib/constants/roles'
 import { UserRole } from '@prisma/client'
+import { requireAuth, userOrgWhere, type AuthContext } from '@/lib/authz'
 
-async function getUsers() {
+async function getUsers(ctx: AuthContext) {
   return prisma.user.findMany({
+    // Isolamento: gestor vê apenas usuários da própria organização;
+    // superadmin vê todos.
+    where: userOrgWhere(ctx),
     orderBy: { fullName: 'asc' },
     select: {
       id: true,
@@ -27,14 +29,14 @@ async function getUsers() {
 }
 
 export default async function UsersPage() {
-  const session = await getServerSession(authOptions)
+  const ctx = await requireAuth()
 
-  // Only platform_admin can access this page
-  if (session?.user?.role !== 'platform_admin') {
+  // Apenas superadmin (plataforma) e gestor (organização) administram usuários
+  if (ctx.role !== 'superadmin' && ctx.role !== 'gestor') {
     redirect('/dashboard')
   }
 
-  const users = await getUsers()
+  const users = await getUsers(ctx)
 
   return (
     <div>

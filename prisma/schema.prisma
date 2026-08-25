@@ -11,12 +11,19 @@ datasource db {
 // ENUMS
 // ============================================
 
+// Papéis globais do usuário na plataforma (RBAC de 3 níveis).
+// - superadmin: administra toda a plataforma (não pertence a nenhuma organização)
+// - gestor: administra a própria organização (fazenda/empresa rural)
+// - colaborador: usuário operacional (agrônomo/técnico de campo)
 enum UserRole {
-  platform_admin
-  project_manager
-  agronomist
-  local_manager
-  operator
+  superadmin
+  gestor
+  colaborador
+}
+
+enum OrganizationStatus {
+  active
+  suspended
 }
 
 enum ProjectStatus {
@@ -91,19 +98,44 @@ enum ProjectRole {
 // MODELS
 // ============================================
 
+// ============================================
+// MULTIEMPRESA (tenant raiz de todo o sistema)
+// ============================================
+
+model Organization {
+  id        String             @id @default(uuid())
+  name      String
+  slug      String             @unique
+  document  String?            // CNPJ ou CPF do responsável (opcional)
+  status    OrganizationStatus @default(active)
+  createdAt DateTime           @default(now()) @map("created_at")
+  updatedAt DateTime           @updatedAt @map("updated_at")
+
+  // Relations
+  users    User[]
+  projects Project[]
+
+  @@map("organizations")
+}
+
 model User {
   id            String    @id @default(uuid())
+  // Organização à qual o usuário pertence.
+  // Nulo apenas para superadmin (que atua acima das organizações).
+  organizationId String?  @map("organization_id")
   email         String    @unique
   password      String
   fullName      String    @map("full_name")
-  role          UserRole  @default(operator)
+  role          UserRole  @default(colaborador)
   phone         String?
   avatarUrl     String?   @map("avatar_url")
   isActive      Boolean   @default(true) @map("is_active")
+  lastLoginAt   DateTime? @map("last_login_at")
   createdAt     DateTime  @default(now()) @map("created_at")
   updatedAt     DateTime  @updatedAt @map("updated_at")
 
   // Relations
+  organization      Organization?   @relation(fields: [organizationId], references: [id], onDelete: SetNull)
   projectsCreated   Project[]       @relation("ProjectCreator")
   projectMembers    ProjectMember[]
   diagnosticsFilled Diagnostic[]
@@ -112,11 +144,15 @@ model User {
   evidencesUploaded Evidence[]
   auditLogs         AuditLog[]
 
+  @@index([organizationId])
   @@map("users")
 }
 
 model Project {
   id          String        @id @default(uuid())
+  // Organização dona do projeto. Nulo apenas em dados legados anteriores
+  // à introdução do multiempresa (serão preenchidos no backfill do seed).
+  organizationId String?    @map("organization_id")
   name        String
   description String?
   status      ProjectStatus @default(active)
@@ -127,11 +163,13 @@ model Project {
   updatedAt   DateTime      @updatedAt @map("updated_at")
 
   // Relations
+  organization   Organization?   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   createdBy      User            @relation("ProjectCreator", fields: [createdById], references: [id])
   members        ProjectMember[]
   municipalities Municipality[]
   tasks          Task[]
 
+  @@index([organizationId])
   @@map("projects")
 }
 

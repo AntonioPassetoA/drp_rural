@@ -1,7 +1,7 @@
 // Database types for DRP Rural Gestão
 // These types mirror the PostgreSQL schema
 
-export type UserRole = 'platform_admin' | 'project_manager' | 'agronomist' | 'local_manager' | 'operator'
+export type UserRole = 'superadmin' | 'gestor' | 'colaborador'
 
 export type ProjectStatus = 'active' | 'paused' | 'completed'
 
