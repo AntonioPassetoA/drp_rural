@@ -6,6 +6,9 @@ import {
   requireProjectInOrg,
   handleAuthzError,
 } from '@/lib/authz'
+import { recordAudit, recordAuditInTx } from '@/lib/audit'
+import { AuditAction } from '@/lib/audit-actions'
+import { metaFromHeaders } from '@/lib/request-context'
 
 interface RouteParams {
   params: Promise<{ projectId: string }>
@@ -45,7 +48,7 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
     const { projectId } = await params
 
     // Confirma posse antes de editar por ID.
-    await requireProjectInOrg(ctx, projectId)
+    const current = await requireProjectInOrg(ctx, projectId)
 
     const body = await request.json()
     const { name, description, status, startDate, endDate } = body
@@ -58,6 +61,27 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
         status,
         startDate: startDate ? new Date(startDate) : null,
         endDate: endDate ? new Date(endDate) : null,
+      },
+    })
+
+    // project.update — não crítico (best-effort). Só campos administrativos:
+    // NÃO gravamos nome/descrição (podem conter dados pessoais), apenas se mudaram.
+    const nameChanged = typeof name === 'string' && name !== current.name
+    const descriptionChanged = (description || null) !== (current.description ?? null)
+    const meta = metaFromHeaders(request.headers)
+    await recordAudit({
+      action: AuditAction.PROJECT_UPDATE,
+      userId: ctx.userId,
+      organizationId: current.organizationId,
+      entityType: 'Project',
+      entityId: projectId,
+      ip: meta.ip,
+      userAgent: meta.userAgent,
+      metadata: {
+        nameChanged,
+        descriptionChanged,
+        statusFrom: current.status,
+        statusTo: project.status,
       },
     })
 
@@ -75,9 +99,25 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
     const { projectId } = await params
 
     // Confirma posse antes de excluir por ID.
-    await requireProjectInOrg(ctx, projectId)
+    const current = await requireProjectInOrg(ctx, projectId)
+    const meta = metaFromHeaders(request.headers)
 
-    await prisma.project.delete({ where: { id: projectId } })
+    // CRÍTICO: exclusão e auditoria na MESMA transação (se o log falhar, a
+    // exclusão é revertida — não há exclusão sem trilha correspondente).
+    await prisma.$transaction(async (tx) => {
+      await tx.project.delete({ where: { id: projectId } })
+      await recordAuditInTx(tx, {
+        action: AuditAction.PROJECT_DELETE,
+        userId: ctx.userId,
+        organizationId: current.organizationId,
+        entityType: 'Project',
+        entityId: projectId,
+        ip: meta.ip,
+        userAgent: meta.userAgent,
+        // Só campo administrativo — NÃO gravamos nome/descrição.
+        metadata: { statusFrom: current.status },
+      })
+    })
 
     return NextResponse.json({ success: true })
   } catch (error) {

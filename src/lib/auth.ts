@@ -3,6 +3,9 @@ import CredentialsProvider from 'next-auth/providers/credentials'
 import { prisma } from '@/lib/prisma'
 import bcrypt from 'bcryptjs'
 import { UserRole } from '@prisma/client'
+import { recordAudit } from '@/lib/audit'
+import { AuditAction } from '@/lib/audit-actions'
+import { metaFromPlainHeaders } from '@/lib/request-context'
 
 declare module 'next-auth' {
   interface Session {
@@ -49,7 +52,7 @@ export const authOptions: NextAuthOptions = {
         email: { label: 'Email', type: 'email' },
         password: { label: 'Senha', type: 'password' },
       },
-      async authorize(credentials) {
+      async authorize(credentials, req) {
         if (!credentials?.email || !credentials?.password) {
           throw new Error('Email e senha são obrigatórios')
         }
@@ -58,6 +61,10 @@ export const authOptions: NextAuthOptions = {
           where: { email: credentials.email },
         })
 
+        // FALHA DE LOGIN: resposta pública genérica e NÃO gravamos no AuditLog
+        // (nem senha, nem e-mail de usuário inexistente). Registrar cada tentativa
+        // recusada exige limitação/agregação durável (ver PENDÊNCIA no relatório);
+        // por ora, fica apenas em log operacional, sem dados pessoais.
         if (!user || !user.isActive) {
           throw new Error('Email ou senha inválidos')
         }
@@ -75,6 +82,20 @@ export const authOptions: NextAuthOptions = {
         await prisma.user.update({
           where: { id: user.id },
           data: { lastLoginAt: new Date() },
+        })
+
+        // auth.login.success — evento NÃO crítico (best-effort).
+        const meta = metaFromPlainHeaders(
+          req?.headers as Record<string, string | string[] | undefined> | undefined
+        )
+        await recordAudit({
+          action: AuditAction.AUTH_LOGIN_SUCCESS,
+          userId: user.id,
+          organizationId: user.organizationId,
+          entityType: 'User',
+          entityId: user.id,
+          ip: meta.ip,
+          userAgent: meta.userAgent,
         })
 
         return {

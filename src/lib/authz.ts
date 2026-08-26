@@ -6,6 +6,13 @@ import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { hasPermission } from '@/permissions/check-permission'
 import type { Permission } from '@/permissions/roles'
+import { AuthzError } from '@/lib/errors'
+import { recordAudit } from '@/lib/audit'
+import { AuditAction } from '@/lib/audit-actions'
+import { metaFromRequestScope } from '@/lib/request-context'
+
+// Reexporta para compatibilidade (código existente importa AuthzError daqui).
+export { AuthzError }
 
 // ============================================================================
 // Contexto de autorização
@@ -22,15 +29,6 @@ export type AuthContext = {
   userId: string
   role: UserRole
   organizationId: string | null
-}
-
-export class AuthzError extends Error {
-  status: number
-  constructor(message: string, status: number) {
-    super(message)
-    this.name = 'AuthzError'
-    this.status = status
-  }
 }
 
 /** Lê o contexto da sessão. Retorna null se não houver usuário autenticado. */
@@ -110,7 +108,31 @@ export function assertOrg(ctx: AuthContext, organizationId: string | null): void
 export async function requireProjectInOrg(ctx: AuthContext, projectId: string) {
   const project = await prisma.project.findUnique({ where: { id: projectId } })
   if (!project) throw new AuthzError('Projeto não encontrado', 404)
-  assertOrg(ctx, project.organizationId)
+
+  if (isSuperadmin(ctx)) {
+    // Superadmin acessando recurso de uma organização = cross-org (auditável).
+    if (project.organizationId) {
+      const meta = await metaFromRequestScope()
+      await recordAudit({
+        action: AuditAction.SUPERADMIN_CROSS_ORG_ACCESS,
+        userId: ctx.userId, organizationId: project.organizationId, crossOrg: true,
+        entityType: 'Project', entityId: project.id, ip: meta.ip, userAgent: meta.userAgent,
+        metadata: { via: 'api' },
+      })
+    }
+    return project
+  }
+
+  if (!project.organizationId || project.organizationId !== ctx.organizationId) {
+    const meta = await metaFromRequestScope()
+    await recordAudit({
+      action: AuditAction.AUTHZ_DENIED, result: 'failure',
+      userId: ctx.userId, organizationId: ctx.organizationId,
+      entityType: 'Project', entityId: projectId, ip: meta.ip, userAgent: meta.userAgent,
+      metadata: { attempted: 'project.access', reason: 'cross_org' },
+    })
+    throw new AuthzError('Recurso não encontrado', 404)
+  }
   return project
 }
 
@@ -123,7 +145,30 @@ export async function requireProjectInOrg(ctx: AuthContext, projectId: string) {
 export async function requireProjectPageAccess(ctx: AuthContext, projectId: string) {
   const project = await prisma.project.findUnique({ where: { id: projectId } })
   if (!project) notFound()
-  if (!isSuperadmin(ctx) && project.organizationId !== ctx.organizationId) notFound()
+
+  if (isSuperadmin(ctx)) {
+    if (project.organizationId) {
+      const meta = await metaFromRequestScope()
+      await recordAudit({
+        action: AuditAction.SUPERADMIN_CROSS_ORG_ACCESS,
+        userId: ctx.userId, organizationId: project.organizationId, crossOrg: true,
+        entityType: 'Project', entityId: project.id, ip: meta.ip, userAgent: meta.userAgent,
+        metadata: { via: 'page' },
+      })
+    }
+    return project
+  }
+
+  if (project.organizationId !== ctx.organizationId) {
+    const meta = await metaFromRequestScope()
+    await recordAudit({
+      action: AuditAction.AUTHZ_DENIED, result: 'failure',
+      userId: ctx.userId, organizationId: ctx.organizationId,
+      entityType: 'Project', entityId: projectId, ip: meta.ip, userAgent: meta.userAgent,
+      metadata: { attempted: 'project.page', reason: 'cross_org' },
+    })
+    notFound()
+  }
   return project
 }
 

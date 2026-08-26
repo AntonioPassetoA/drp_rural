@@ -5,6 +5,9 @@ import { createProjectSchema } from '../validations/project-schema'
 import { redirect } from 'next/navigation'
 import { revalidatePath } from 'next/cache'
 import { requireAuth, requirePermission, AuthzError } from '@/lib/authz'
+import { recordAuditInTx } from '@/lib/audit'
+import { AuditAction } from '@/lib/audit-actions'
+import { metaFromRequestScope } from '@/lib/request-context'
 
 export type CreateProjectState = {
   error?: string
@@ -49,9 +52,13 @@ export async function createProject(
     return { error: 'Superadmin deve selecionar uma organização para criar projetos.' }
   }
 
+  const meta = await metaFromRequestScope()
+
   let newProjectId: string
   try {
-    // Transação: projeto + vínculo do criador como gestor do projeto.
+    // CRÍTICO: projeto + membro inicial + auditoria na MESMA transação.
+    // Se qualquer parte (inclusive a auditoria) falhar, nada é criado.
+    // Metadados só administrativos — NÃO gravamos nome/descrição.
     const project = await prisma.$transaction(async (tx) => {
       const created = await tx.project.create({
         data: {
@@ -72,6 +79,17 @@ export async function createProject(
           roleInProject: 'manager',
           scopeType: 'project',
         },
+      })
+
+      await recordAuditInTx(tx, {
+        action: AuditAction.PROJECT_CREATE,
+        userId: ctx.userId,
+        organizationId,
+        entityType: 'Project',
+        entityId: created.id,
+        ip: meta.ip,
+        userAgent: meta.userAgent,
+        newData: { status: created.status },
       })
 
       return created

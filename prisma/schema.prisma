@@ -26,6 +26,12 @@ enum OrganizationStatus {
   suspended
 }
 
+// Resultado de uma ação auditada.
+enum AuditResult {
+  success
+  failure
+}
+
 enum ProjectStatus {
   active
   paused
@@ -112,8 +118,9 @@ model Organization {
   updatedAt DateTime           @updatedAt @map("updated_at")
 
   // Relations
-  users    User[]
-  projects Project[]
+  users     User[]
+  projects  Project[]
+  auditLogs AuditLog[]
 
   @@map("organizations")
 }
@@ -316,18 +323,44 @@ model Evidence {
 }
 
 model AuditLog {
-  id         String   @id @default(uuid())
-  userId     String   @map("user_id")
-  action     String
-  entityType String   @map("entity_type")
-  entityId   String   @map("entity_id")
-  oldData    Json?    @map("old_data")
-  newData    Json?    @map("new_data")
-  ipAddress  String?  @map("ip_address")
-  createdAt  DateTime @default(now()) @map("created_at")
+  id             String      @id @default(uuid())
+  // Organização relacionada à ação (nula quando não se aplica — ex.: ações de
+  // plataforma pelo superadmin). Vem SEMPRE do contexto/entidade, nunca do front.
+  organizationId String?     @map("organization_id")
+  // Usuário responsável — NULO quando não identificado (ex.: login recusado por
+  // e-mail inexistente) ou ações de sistema.
+  userId         String?     @map("user_id")
+  action         String      // ex.: 'user.login_success', 'project.delete'
+  entityType     String?     @map("entity_type") // ex.: 'User', 'Project'
+  entityId       String?     @map("entity_id")
+  result         AuditResult @default(success)
+  // Marca acesso cross-org do superadmin (dado de uma org diferente da sua).
+  crossOrg       Boolean     @default(false) @map("cross_org")
+  ipAddress      String?     @map("ip_address")  // IP tratado/anonimizado no serviço
+  userAgent      String?     @map("user_agent")
+  metadata       Json?       // metadados JÁ sanitizados (sem segredos)
+  oldData        Json?       @map("old_data")    // valores anteriores (sanitizados)
+  newData        Json?       @map("new_data")    // valores posteriores (sanitizados)
+  createdAt      DateTime    @default(now()) @map("created_at")
 
-  // Relations
-  user User @relation(fields: [userId], references: [id])
+  // Relations:
+  //  - organization: Restrict — organização NÃO pode ser apagada fisicamente
+  //    (deve ser suspensa). Assim o vínculo histórico org↔log nunca se perde.
+  //  - user: SetNull — proteção extra; o log jamais é apagado junto do usuário
+  //    (na prática usamos desativação lógica, mas o SetNull garante o histórico).
+  organization Organization? @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  user         User?         @relation(fields: [userId], references: [id], onDelete: SetNull)
 
+  // Índices orientados às consultas + PAGINAÇÃO POR CURSOR estável
+  // (ordem: createdAt DESC, id DESC). O `id` como última coluna garante o
+  // desempate no cursor sem duplicar/perder registros de mesmo createdAt.
+  // Cada composto também cobre o filtro pelas colunas à esquerda (prefixo),
+  // então não há índices simples redundantes.
+  @@index([organizationId, createdAt, id])
+  @@index([userId, createdAt, id])
+  @@index([action, createdAt, id])
+  @@index([result, createdAt, id])
+  @@index([createdAt, id])                 // listagem global (superadmin)
+  @@index([entityType, entityId, createdAt]) // histórico de uma entidade
   @@map("audit_logs")
 }

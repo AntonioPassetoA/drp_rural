@@ -8,6 +8,24 @@ import {
   requirePermission,
   userOrgWhere,
 } from '@/lib/authz'
+import { recordAudit, recordAuditInTx } from '@/lib/audit'
+import { AuditAction } from '@/lib/audit-actions'
+import { metaFromRequestScope } from '@/lib/request-context'
+
+/** Registra uma tentativa proibida (best-effort, não bloqueia o fluxo de erro). */
+async function auditDenied(ctx: AuthContext, attempted: string, extra?: Record<string, unknown>) {
+  const meta = await metaFromRequestScope()
+  await recordAudit({
+    action: AuditAction.AUTHZ_DENIED,
+    result: 'failure',
+    userId: ctx.userId,
+    organizationId: ctx.organizationId,
+    entityType: 'User',
+    ip: meta.ip,
+    userAgent: meta.userAgent,
+    metadata: { attempted, ...(extra || {}) },
+  })
+}
 
 // ============================================================================
 // Serviço de usuários — TODAS as operações exigem um AuthContext e aplicam:
@@ -56,6 +74,8 @@ export async function getUserInScope(ctx: AuthContext, id: string): Promise<User
   const user = await prisma.user.findUnique({ where: { id } })
   if (!user) throw new AuthzError('Usuário não encontrado', 404)
   if (!isSuperadmin(ctx) && user.organizationId !== ctx.organizationId) {
+    // Tentativa de administrar/acessar usuário de OUTRA organização (auditável).
+    await auditDenied(ctx, 'user.admin', { targetUserId: id, reason: 'cross_org' })
     // Não revela a existência de usuário de outra organização.
     throw new AuthzError('Usuário não encontrado', 404)
   }
@@ -105,21 +125,40 @@ export async function createUser(ctx: AuthContext, data: CreateUserInput): Promi
 
   // Gestor não pode criar superadministrador.
   if (!isSuperadmin(ctx) && data.role === 'superadmin') {
+    await auditDenied(ctx, 'user.create', { reason: 'gestor_create_superadmin' })
     throw new AuthzError('Gestor não pode criar superadministrador', 403)
   }
 
   const organizationId = resolveTargetOrg(ctx, data.role, data.organizationId ?? null)
 
   const hashedPassword = await bcrypt.hash(data.password, 10)
-  return prisma.user.create({
-    data: {
-      email: data.email,
-      password: hashedPassword,
-      fullName: data.fullName,
-      role: data.role,
-      phone: data.phone,
-      organizationId,
-    },
+  const meta = await metaFromRequestScope()
+
+  // CRÍTICO: criar conta (acesso ao sistema) e auditoria na MESMA transação.
+  // Se o log falhar, a criação é revertida. NUNCA registramos e-mail/telefone/
+  // nome/senha/hash — apenas ID, papel, organização e status inicial.
+  return prisma.$transaction(async (tx) => {
+    const created = await tx.user.create({
+      data: {
+        email: data.email,
+        password: hashedPassword,
+        fullName: data.fullName,
+        role: data.role,
+        phone: data.phone,
+        organizationId,
+      },
+    })
+    await recordAuditInTx(tx, {
+      action: AuditAction.USER_CREATE,
+      userId: ctx.userId,
+      organizationId: created.organizationId,
+      entityType: 'User',
+      entityId: created.id,
+      ip: meta.ip,
+      userAgent: meta.userAgent,
+      newData: { role: created.role, organizationId: created.organizationId, isActive: created.isActive },
+    })
+    return created
   })
 }
 
@@ -134,9 +173,11 @@ export async function updateUser(
   // Gestor não pode promover ninguém a superadmin nem editar um superadmin.
   if (!isSuperadmin(ctx)) {
     if (data.role === 'superadmin') {
+      await auditDenied(ctx, 'user.role.change', { targetUserId: id, reason: 'promote_superadmin' })
       throw new AuthzError('Gestor não pode promover a superadministrador', 403)
     }
     if (target.role === 'superadmin') {
+      await auditDenied(ctx, 'user.update', { targetUserId: id, reason: 'edit_superadmin' })
       throw new AuthzError('Sem permissão', 403)
     }
   }
@@ -145,30 +186,59 @@ export async function updateUser(
   let organizationId = target.organizationId
   if (data.organizationId !== undefined && data.organizationId !== target.organizationId) {
     if (!isSuperadmin(ctx)) {
+      await auditDenied(ctx, 'user.organization.transfer', { targetUserId: id })
       throw new AuthzError('Gestor não pode transferir usuários entre organizações', 403)
     }
     organizationId = data.organizationId
   }
 
   const newRole = data.role ?? target.role
+  const roleChanged = newRole !== target.role
+  const orgChanged = organizationId !== target.organizationId
 
   // Se o alvo é o último gestor ativo e vai deixar de ser gestor (ou mudar de org),
   // bloqueia para não deixar a organização sem gestor.
-  const deixaDeSerGestor = target.role === 'gestor' && target.isActive && newRole !== 'gestor'
-  const mudaDeOrg = organizationId !== target.organizationId
-  if (target.role === 'gestor' && target.isActive && (deixaDeSerGestor || mudaDeOrg)) {
+  if (target.role === 'gestor' && target.isActive && ((roleChanged && newRole !== 'gestor') || orgChanged)) {
     await assertOrgKeepsActiveManager(target.organizationId, target.id)
   }
 
-  return prisma.user.update({
-    where: { id },
-    data: {
-      fullName: data.fullName,
-      role: newRole,
-      phone: data.phone,
-      avatarUrl: data.avatarUrl,
-      organizationId: newRole === 'superadmin' ? null : organizationId,
-    },
+  const meta = await metaFromRequestScope()
+
+  // CRÍTICO: a atualização e a auditoria ocorrem na MESMA transação.
+  // Se a auditoria falhar, a alteração é revertida (sem trilha → sem alteração).
+  return prisma.$transaction(async (tx) => {
+    const updated = await tx.user.update({
+      where: { id },
+      data: {
+        fullName: data.fullName,
+        role: newRole,
+        phone: data.phone,
+        avatarUrl: data.avatarUrl,
+        organizationId: newRole === 'superadmin' ? null : organizationId,
+      },
+    })
+    const orgForLog = updated.organizationId ?? target.organizationId
+    if (roleChanged) {
+      await recordAuditInTx(tx, {
+        action: AuditAction.USER_ROLE_CHANGE, userId: ctx.userId, organizationId: orgForLog,
+        entityType: 'User', entityId: id, ip: meta.ip, userAgent: meta.userAgent,
+        oldData: { role: target.role }, newData: { role: newRole },
+      })
+    }
+    if (orgChanged) {
+      await recordAuditInTx(tx, {
+        action: AuditAction.USER_ORG_TRANSFER, userId: ctx.userId, organizationId: orgForLog,
+        entityType: 'User', entityId: id, ip: meta.ip, userAgent: meta.userAgent,
+        oldData: { organizationId: target.organizationId }, newData: { organizationId },
+      })
+    }
+    if (!roleChanged && !orgChanged) {
+      await recordAuditInTx(tx, {
+        action: AuditAction.USER_UPDATE, userId: ctx.userId, organizationId: orgForLog,
+        entityType: 'User', entityId: id, ip: meta.ip, userAgent: meta.userAgent,
+      })
+    }
+    return updated
   })
 }
 
@@ -182,6 +252,7 @@ export async function setUserActive(
   const target = await getUserInScope(ctx, id)
 
   if (!isSuperadmin(ctx) && target.role === 'superadmin') {
+    await auditDenied(ctx, isActive ? 'user.activate' : 'user.deactivate', { targetUserId: id, reason: 'target_superadmin' })
     throw new AuthzError('Sem permissão', 403)
   }
 
@@ -190,7 +261,19 @@ export async function setUserActive(
     await assertOrgKeepsActiveManager(target.organizationId, target.id)
   }
 
-  return prisma.user.update({ where: { id }, data: { isActive } })
+  const meta = await metaFromRequestScope()
+
+  // CRÍTICO: ativação/desativação e auditoria na MESMA transação.
+  return prisma.$transaction(async (tx) => {
+    const updated = await tx.user.update({ where: { id }, data: { isActive } })
+    await recordAuditInTx(tx, {
+      action: isActive ? AuditAction.USER_ACTIVATE : AuditAction.USER_DEACTIVATE,
+      userId: ctx.userId, organizationId: target.organizationId,
+      entityType: 'User', entityId: id, ip: meta.ip, userAgent: meta.userAgent,
+      oldData: { isActive: target.isActive }, newData: { isActive },
+    })
+    return updated
+  })
 }
 
 export async function deactivateUser(ctx: AuthContext, id: string): Promise<User> {
