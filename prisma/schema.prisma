@@ -32,6 +32,35 @@ enum AuditResult {
   failure
 }
 
+// Ciclo de vida de uma evidência (arquivo) no fluxo de upload direto ao Storage.
+// QUARANTINED    = rejeitado ANTES da expiração. Como o signed upload token pode
+//                  continuar válido (P1/P5 não comprovados), o path pode ser reusado.
+//                  NUNCA vira READY; sem URL; permanece acompanhado até uploadExpiresAt,
+//                  quando o reconciliador faz a limpeza DEFINITIVA (→ CLEANING → FAILED).
+// CLEANING       = limpeza EM ANDAMENTO (transição obrigatória antes de remover o
+//                  objeto). NUNCA pode virar READY.
+// FAILED         = autorização EXPIRADA e objeto removido/confirmado ausente (terminal).
+// CLEANUP_FAILED = limpeza tentada MAS a remoção falhou (objeto pode existir → retry).
+// DELETE_FAILED  = exclusão iniciada MAS a remoção falhou (objeto pode existir → retry).
+// DELETED        = objeto removido/confirmado-ausente + deletedAt (terminal).
+enum EvidenceStatus {
+  UPLOADING
+  READY
+  FAILED
+  QUARANTINED
+  CLEANING
+  CLEANUP_FAILED
+  DELETING
+  DELETE_FAILED
+  DELETED
+}
+
+// Categoria derivada do CONTEÚDO validado (nunca escolhida pelo frontend).
+enum EvidenceCategory {
+  photo
+  document
+}
+
 enum ProjectStatus {
   active
   paused
@@ -121,6 +150,7 @@ model Organization {
   users     User[]
   projects  Project[]
   auditLogs AuditLog[]
+  evidences Evidence[]
 
   @@map("organizations")
 }
@@ -175,6 +205,7 @@ model Project {
   members        ProjectMember[]
   municipalities Municipality[]
   tasks          Task[]
+  evidences      Evidence[]
 
   @@index([organizationId])
   @@map("projects")
@@ -297,28 +328,63 @@ model Task {
   @@map("tasks")
 }
 
+// Evidência = arquivo (foto/documento) armazenado no Supabase Storage.
+// Nasce em UPLOADING (antes do upload); os campos validados (mimeType/fileSize/
+// category/evidenceType) só são preenchidos na finalização, após inspeção do
+// conteúdo real. A completude de READY é garantida por CHECK constraint no banco.
 model Evidence {
-  id           String       @id @default(uuid())
-  evidenceType EvidenceType @map("evidence_type")
-  fileUrl      String       @map("file_url")
-  fileName     String       @map("file_name")
-  fileSize     Int          @map("file_size")
-  mimeType     String       @map("mime_type")
-  latitude     Decimal?     @db.Decimal(10, 8)
-  longitude    Decimal?     @db.Decimal(11, 8)
-  capturedAt   DateTime?    @map("captured_at")
-  taskId       String?      @map("task_id")
-  diagnosticId String?      @map("diagnostic_id")
-  localityId   String?      @map("locality_id")
-  uploadedById String       @map("uploaded_by")
-  createdAt    DateTime     @default(now()) @map("created_at")
+  id             String            @id @default(uuid())
+  organizationId String            @map("organization_id")
+  projectId      String            @map("project_id")
+  status         EvidenceStatus    @default(UPLOADING)
+  // Caminho interno no bucket (UUID gerado só no backend). Imutável. Não é segredo,
+  // mas nunca aparece em respostas comuns, listagens, auditoria ou logs.
+  storagePath    String            @unique @map("storage_path")
 
-  // Relations
-  task       Task?       @relation(fields: [taskId], references: [id], onDelete: SetNull)
-  diagnostic Diagnostic? @relation(fields: [diagnosticId], references: [id], onDelete: SetNull)
-  locality   Locality?   @relation(fields: [localityId], references: [id], onDelete: SetNull)
-  uploadedBy User        @relation(fields: [uploadedById], references: [id])
+  // Tamanho ALEGADO no authorize — só para rejeição antecipada. Nunca substitui o real.
+  declaredSize   Int?              @map("declared_size")
 
+  // VALIDADOS (nullable durante UPLOADING; derivados do conteúdo na finalização)
+  evidenceType   EvidenceType?     @map("evidence_type")
+  category       EvidenceCategory?
+  mimeType       String?           @map("mime_type")
+  fileSize       Int?              @map("file_size")
+
+  // Ciclo de vida
+  uploadExpiresAt   DateTime? @map("upload_expires_at")
+  readyAt           DateTime? @map("ready_at")
+  deletedAt         DateTime? @map("deleted_at")
+  reconcileLockedAt DateTime? @map("reconcile_locked_at")
+  // Token único por execução do reconciliador (impede execução antiga de concluir
+  // uma Evidence já re-reivindicada por outra execução).
+  reconcileLockId   String?   @map("reconcile_lock_id")
+
+  // Legado (deprecado, nullable — não gravamos mais)
+  fileUrl        String?           @map("file_url")
+  fileName       String?           @map("file_name")
+
+  latitude       Decimal?          @db.Decimal(10, 8)
+  longitude      Decimal?          @db.Decimal(11, 8)
+  capturedAt     DateTime?         @map("captured_at")
+  taskId         String?           @map("task_id")
+  diagnosticId   String?           @map("diagnostic_id")
+  localityId     String?           @map("locality_id")
+  uploadedById   String            @map("uploaded_by")
+  createdAt      DateTime          @default(now()) @map("created_at")
+  updatedAt      DateTime          @updatedAt @map("updated_at")
+
+  // Relations — Restrict em org/projeto/uploader (NUNCA Cascade → evita órfãos no Storage)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  project      Project      @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  task         Task?        @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  diagnostic   Diagnostic?  @relation(fields: [diagnosticId], references: [id], onDelete: SetNull)
+  locality     Locality?    @relation(fields: [localityId], references: [id], onDelete: SetNull)
+  uploadedBy   User         @relation(fields: [uploadedById], references: [id], onDelete: Restrict)
+
+  @@index([organizationId, createdAt, id])
+  @@index([projectId, createdAt, id])
+  @@index([status, uploadExpiresAt])
+  @@index([status, reconcileLockedAt])
   @@map("evidences")
 }
 
