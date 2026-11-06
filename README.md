@@ -76,7 +76,8 @@ src/
 
 1. Clone o repositório:
 ```bash
-cd C:\teste\appfinal-agro
+git clone https://github.com/AntonioPassetoA/drp_rural.git
+cd drp_rural
 ```
 
 2. Instale as dependências:
